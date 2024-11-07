@@ -4,28 +4,47 @@ import { ErrorData, FileData, RecordData, ResultData } from "../interfaces";
 import { validateDocument } from "./validations/document.validation";
 import { validateContract } from "./validations/contract.validation";
 import { validateInstallment } from "./validations/installment.validation";
+import { parseDecimalNumber, parseWholeNumber } from "../utils/format.util";
+import { SuccessData } from "../interfaces/csv/success.interface";
 
 const processings = new Map<string, ResultData>();
 
 const processRecord = async (
   record: any,
   lineNumber: number
-): Promise<[RecordData | null, ErrorData[]]> => {
+): Promise<[RecordData | null, ErrorData[], SuccessData[]]> => {
   const errors: ErrorData[] = [];
+  const successes: SuccessData[] = [];
 
   try {
     const data: FileData = {
-      ...record,
-      qtPrestacoes: Number(record.qtPrestacoes),
-      vlTotal: Number(record.vlTotal),
-      nrPresta: Number(record.nrPresta),
-      vlPresta: Number(record.vlPresta),
-      vlMora: Number(record.vlMora),
-      vlMulta: Number(record.vlMulta),
-      vlOutAcr: Number(record.vlOutAcr),
-      vlIof: Number(record.vlIof),
-      vlDescon: Number(record.vlDescon),
-      vlAtual: Number(record.vlAtual),
+      nrInst: String(record.nrInst),
+      nrAgencia: String(record.nrAgencia),
+      cdClient: String(record.cdClient),
+      nmClient: String(record.nmClient),
+      nrCpfCnpj: String(record.nrCpfCnpj),
+      nrContrato: String(record.nrContrato),
+      dtContrato: String(record.dtContrato),
+      cdProduto: String(record.cdProduto),
+      dsProduto: String(record.dsProduto),
+      cdCarteira: String(record.cdCarteira),
+      dsCarteira: String(record.dsCarteira),
+      nrProposta: String(record.nrProposta),
+      tpPresta: String(record.tpPresta),
+      nrSeqPre: String(record.nrSeqPre),
+      dtVctPre: String(record.dtVctPre),
+      idSituac: String(record.idSituac),
+      idSitVen: String(record.idSitVen),
+      qtPrestacoes: parseWholeNumber(record.qtPrestacoes),
+      nrPresta: parseWholeNumber(record.nrPresta),
+      vlTotal: parseDecimalNumber(record.vlTotal),
+      vlPresta: parseDecimalNumber(record.vlPresta),
+      vlMora: parseDecimalNumber(record.vlMora),
+      vlMulta: parseDecimalNumber(record.vlMulta),
+      vlOutAcr: parseDecimalNumber(record.vlOutAcr),
+      vlIof: parseDecimalNumber(record.vlIof),
+      vlDescon: parseDecimalNumber(record.vlDescon),
+      vlAtual: parseDecimalNumber(record.vlAtual),
     };
 
     let cpfCnpjValido = false;
@@ -33,7 +52,13 @@ const processRecord = async (
     let prestacaoValida = false;
 
     try {
-      cpfCnpjValido = validateDocument(data.nrCpfCnpj);
+      cpfCnpjValido = await validateDocument(data.nrCpfCnpj);
+      successes.push({
+        line: lineNumber,
+        field: "nrCpfCnpj",
+        value: data.nrCpfCnpj,
+        message: "Document successfully validated",
+      });
     } catch (error) {
       errors.push({
         line: lineNumber,
@@ -44,7 +69,13 @@ const processRecord = async (
     }
 
     try {
-      contratoValido = validateContract(data);
+      contratoValido = await validateContract(data);
+      successes.push({
+        line: lineNumber,
+        field: "contract",
+        value: data.nrContrato,
+        message: "Contract successfully validated",
+      });
     } catch (error) {
       errors.push({
         line: lineNumber,
@@ -55,11 +86,17 @@ const processRecord = async (
     }
 
     try {
-      prestacaoValida = validateInstallment(
+      prestacaoValida = await validateInstallment(
         data.vlTotal,
         data.vlPresta,
         data.qtPrestacoes
       );
+      successes.push({
+        line: lineNumber,
+        field: "installment",
+        value: String(data.vlPresta),
+        message: "Installment successfully validated",
+      });
     } catch (error) {
       errors.push({
         line: lineNumber,
@@ -76,7 +113,7 @@ const processRecord = async (
       prestacaoValida,
     };
 
-    return [processedData, errors];
+    return [processedData, errors, successes];
   } catch (error) {
     errors.push({
       line: lineNumber,
@@ -84,7 +121,8 @@ const processRecord = async (
       value: JSON.stringify(record),
       error: error instanceof Error ? error.message : "Error processing record",
     });
-    return [null, errors];
+
+    return [null, errors, []];
   }
 };
 
@@ -100,6 +138,7 @@ export const processCsv = async (
       result: {
         data: [],
         errors: [],
+        successes: [],
         summary: {
           totalRecords: 0,
           validRecords: 0,
@@ -112,23 +151,49 @@ export const processCsv = async (
       },
     });
 
-    const parser = new Parser({ columns: true, skip_empty_lines: true });
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(parser);
+    const parser = new Parser({
+      columns: true,
+      skip_empty_lines: true,
+      from_line: 1,
+      trim: true,
+    });
 
     const processedData: RecordData[] = [];
     const allErrors: ErrorData[] = [];
+    const allSuccesses: SuccessData[] = [];
 
     let lineNumber = 0;
-    for await (const record of parser) {
-      lineNumber++;
-      const [data, errors] = await processRecord(record, lineNumber);
 
-      if (data) {
-        processedData.push(data);
-      }
-      allErrors.push(...errors);
-    }
+    await new Promise<void>((resolve, reject) => {
+      const fileStream = fs.createReadStream(filePath);
+
+      parser.on("readable", async () => {
+        let record;
+        while ((record = parser.read()) !== null) {
+          lineNumber++;
+          const [data, errors, successes] = await processRecord(
+            record,
+            lineNumber
+          );
+
+          if (data) {
+            processedData.push(data);
+          }
+          allErrors.push(...errors);
+          allSuccesses.push(...successes);
+        }
+      });
+
+      parser.on("error", (error) => {
+        reject(error);
+      });
+
+      parser.on("end", () => {
+        resolve();
+      });
+
+      fileStream.pipe(parser);
+    });
 
     const endTime = new Date();
     const processingTime = `${
@@ -145,6 +210,7 @@ export const processCsv = async (
       result: {
         data: processedData,
         errors: allErrors,
+        successes: allSuccesses,
         summary: {
           totalRecords: processedData.length,
           validRecords: validRecords.length,

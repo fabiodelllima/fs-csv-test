@@ -1,4 +1,5 @@
 import { RecordData, ResultData } from "../interfaces";
+import { SuccessData } from "../interfaces/csv/success.interface";
 
 export const formatProcessingResponse = (
   status: ResultData,
@@ -22,6 +23,7 @@ export const formatProcessingResponse = (
       processingTime: status.result.summary.processingTime,
       totalValue: status.result.summary.totalValue,
       errors: status.result.errors,
+      successes: status.result.successes as SuccessData[],
     },
   } as const;
 };
@@ -38,6 +40,7 @@ export const formatDataResponse = (
       processingTime: result.summary.processingTime,
       totalValue: result.summary.totalValue,
     },
+    successes: result.successes as SuccessData[],
   } as const;
 };
 
@@ -52,3 +55,15 @@ const countInvalidRecords = (records: RecordData[]): number =>
     (record) =>
       !record.cpfCnpjValido || !record.contratoValido || !record.prestacaoValida
   ).length;
+
+// "1.234,56" => 1234.56
+export const parseDecimalNumber = (value: string | number): number => {
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d.-]/g, ""));
+};
+
+// "1.234" => 1234
+export const parseWholeNumber = (value: string | number): number => {
+  if (typeof value === "number") return Math.floor(value);
+  return Number(String(value).replace(/\D/g, ""));
+};
